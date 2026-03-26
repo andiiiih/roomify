@@ -1,46 +1,128 @@
-import React, { useCallback, useState } from 'react'
-import { useOutletContext } from "react-router";
-import { CheckCircle2, ImageIcon, UploadIcon } from "lucide-react";
-import { PROGRESS_INCREMENT, PROGRESS_INTERVAL_MS, REDIRECT_DELAY_MS } from "../lib/constant";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useOutletContext } from 'react-router';
+import { CheckCircle2, ImageIcon, UploadIcon } from 'lucide-react';
+import {
+    PROGRESS_INCREMENT,
+    PROGRESS_INTERVAL_MS,
+    REDIRECT_DELAY_MS,
+} from '../lib/constant';
 
 interface UploadProps {
     onComplete?: (base64Data: string) => void;
 }
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
 const Upload = ({ onComplete }: UploadProps) => {
     const [file, setFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [error, setError] = useState('');
+
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { isSignedIn } = useOutletContext<AuthContext>();
 
-    const processFile = useCallback((file: File) => {
-        if (!isSignedIn) return;
+    useEffect(() => {
+        return () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
 
-        setFile(file);
-        setProgress(0);
-
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const base64Data = reader.result as string;
-
-            const interval = setInterval(() => {
-                setProgress((prev) => {
-                    const next = prev + PROGRESS_INCREMENT;
-                    if (next >= 100) {
-                        clearInterval(interval);
-                        setTimeout(() => {
-                            onComplete?.(base64Data);
-                        }, REDIRECT_DELAY_MS);
-                        return 100;
-                    }
-                    return next;
-                });
-            }, PROGRESS_INTERVAL_MS);
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+            }
         };
+    }, []);
 
-        reader.readAsDataURL(file);
-    }, [isSignedIn, onComplete]);
+    const validateFile = (selectedFile: File) => {
+        if (!selectedFile.type.startsWith('image/')) {
+            setError('Please upload a JPG or PNG image.');
+            return false;
+        }
+
+        if (selectedFile.size > MAX_FILE_SIZE) {
+            setError('File size must be 50 MB or less.');
+            return false;
+        }
+
+        return true;
+    };
+
+    const processFile = useCallback(
+        (selectedFile: File) => {
+            if (!isSignedIn) return;
+
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+            }
+
+            setError('');
+            setFile(selectedFile);
+            setProgress(0);
+
+            const reader = new FileReader();
+
+            reader.onloadend = () => {
+                const base64Data = reader.result as string;
+
+                intervalRef.current = setInterval(() => {
+                    setProgress((prev) => {
+                        const next = prev + PROGRESS_INCREMENT;
+
+                        if (next >= 100) {
+                            if (intervalRef.current) {
+                                clearInterval(intervalRef.current);
+                                intervalRef.current = null;
+                            }
+
+                            if (timeoutRef.current) {
+                                clearTimeout(timeoutRef.current);
+                                timeoutRef.current = null;
+                            }
+
+                            timeoutRef.current = setTimeout(() => {
+                                onComplete?.(base64Data);
+                                timeoutRef.current = null;
+                            }, REDIRECT_DELAY_MS);
+
+                            return 100;
+                        }
+
+                        return next;
+                    });
+                }, PROGRESS_INTERVAL_MS);
+            };
+
+            reader.onerror = () => {
+                if (intervalRef.current) {
+                    clearInterval(intervalRef.current);
+                    intervalRef.current = null;
+                }
+
+                if (timeoutRef.current) {
+                    clearTimeout(timeoutRef.current);
+                    timeoutRef.current = null;
+                }
+
+                setFile(null);
+                setProgress(0);
+                setError('Failed to read file.');
+            };
+
+            reader.readAsDataURL(selectedFile);
+        },
+        [isSignedIn, onComplete]
+    );
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -58,23 +140,38 @@ const Upload = ({ onComplete }: UploadProps) => {
 
         if (!isSignedIn) return;
 
-        const droppedFile = e.dataTransfer.files[0];
-        if (droppedFile && droppedFile.type.startsWith('image/')) {
-            processFile(droppedFile);
-        }
+        setError('');
+
+        const droppedFile = e.dataTransfer.files?.[0];
+        if (!droppedFile) return;
+
+        if (!validateFile(droppedFile)) return;
+
+        processFile(droppedFile);
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!isSignedIn) return;
 
+        setError('');
+
         const selectedFile = e.target.files?.[0];
-        if (selectedFile) {
-            processFile(selectedFile);
+        if (!selectedFile) return;
+
+        if (!validateFile(selectedFile)) {
+            e.target.value = '';
+            return;
         }
+
+        processFile(selectedFile);
+
+        e.target.value = '';
     };
 
     return (
         <div className="upload">
+            {error && <p className="error">{error}</p>}
+
             {!file ? (
                 <div
                     className={`dropzone ${isDragging ? 'is-dragging' : ''}`}
@@ -94,11 +191,13 @@ const Upload = ({ onComplete }: UploadProps) => {
                         <div className="drop-icon">
                             <UploadIcon size={20} />
                         </div>
+
                         <p>
-                            {isSignedIn ? (
-                                "Click to upload or just drag and drop"
-                            ) : ("Sign in or sign up with Puter to upload")}
+                            {isSignedIn
+                                ? 'Click to upload or just drag and drop'
+                                : 'Sign in or sign up with Puter to upload'}
                         </p>
+
                         <p className="help">Maximum file size 50 MB.</p>
                     </div>
                 </div>
@@ -126,7 +225,7 @@ const Upload = ({ onComplete }: UploadProps) => {
                 </div>
             )}
         </div>
-    )
+    );
 };
 
 export default Upload;

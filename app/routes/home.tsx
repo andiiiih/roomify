@@ -15,10 +15,12 @@ export function meta({}: Route.MetaArgs) {
 
 export default function Home() {
     const navigate = useNavigate();
-    const handleUploadComplete = async (based64Image: string) => {
+    const handleUploadComplete = async (base64Image: string) => {
         const newId = Date.now().toString();
 
-        navigate(`/visualizer/${newId}`);
+        navigate(`/visualizer/${newId}`, {
+            state: { image: base64Image }
+        });
 
         return true;
     }
