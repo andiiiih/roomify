@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useOutletContext } from "react-router";
 import { CheckCircle2, ImageIcon, UploadIcon } from "lucide-react";
 import { PROGRESS_INCREMENT, PROGRESS_INTERVAL_MS, REDIRECT_DELAY_MS } from "../lib/constant";
@@ -11,6 +11,8 @@ const Upload = ({ onComplete }: UploadProps) => {
     const [file, setFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [base64Data, setBase64Data] = useState<string | null>(null);
+    const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
     const { isSignedIn } = useOutletContext<AuthContext>();
 
@@ -19,16 +21,36 @@ const Upload = ({ onComplete }: UploadProps) => {
 
         setFile(file);
         setProgress(0);
+        setBase64Data(null);
 
         const reader = new FileReader();
         reader.onloadend = () => {
             const base64Data = reader.result as string;
+            setBase64Data(base64Data);
+        };
 
-            const interval = setInterval(() => {
+        reader.onerror = () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+            setProgress(0);
+            onComplete?.('');
+        };
+
+        reader.readAsDataURL(file);
+    }, [isSignedIn, onComplete]);
+
+    useEffect(() => {
+        if (base64Data) {
+            intervalRef.current = setInterval(() => {
                 setProgress((prev) => {
                     const next = prev + PROGRESS_INCREMENT;
                     if (next >= 100) {
-                        clearInterval(interval);
+                        if (intervalRef.current) {
+                            clearInterval(intervalRef.current);
+                            intervalRef.current = null;
+                        }
                         setTimeout(() => {
                             onComplete?.(base64Data);
                         }, REDIRECT_DELAY_MS);
@@ -37,10 +59,15 @@ const Upload = ({ onComplete }: UploadProps) => {
                     return next;
                 });
             }, PROGRESS_INTERVAL_MS);
-        };
+        }
 
-        reader.readAsDataURL(file);
-    }, [isSignedIn, onComplete]);
+        return () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+        };
+    }, [base64Data, onComplete]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
