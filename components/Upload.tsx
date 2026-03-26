@@ -21,6 +21,7 @@ const Upload = ({ onComplete }: UploadProps) => {
 
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const prevReaderRef = useRef<FileReader | null>(null);
 
     const { isSignedIn } = useOutletContext<AuthContext>();
 
@@ -35,11 +36,18 @@ const Upload = ({ onComplete }: UploadProps) => {
                 clearTimeout(timeoutRef.current);
                 timeoutRef.current = null;
             }
+
+            if (prevReaderRef.current && prevReaderRef.current.readyState === FileReader.LOADING) {
+                prevReaderRef.current.abort();
+            }
+            prevReaderRef.current = null;
         };
     }, []);
 
     const validateFile = (selectedFile: File) => {
-        if (!selectedFile.type.startsWith('image/')) {
+        const allowedTypes = ['image/jpeg', 'image/png'];
+
+        if (!allowedTypes.includes(selectedFile.type)) {
             setError('Please upload a JPG or PNG image.');
             return false;
         }
@@ -49,6 +57,7 @@ const Upload = ({ onComplete }: UploadProps) => {
             return false;
         }
 
+        setError('');
         return true;
     };
 
@@ -66,13 +75,21 @@ const Upload = ({ onComplete }: UploadProps) => {
                 timeoutRef.current = null;
             }
 
+            if (prevReaderRef.current && prevReaderRef.current.readyState === FileReader.LOADING) {
+                prevReaderRef.current.abort();
+            }
+            prevReaderRef.current = null;
+
             setError('');
             setFile(selectedFile);
             setProgress(0);
 
             const reader = new FileReader();
+            prevReaderRef.current = reader;
 
             reader.onloadend = () => {
+                prevReaderRef.current = null;
+
                 const base64Data = reader.result as string;
 
                 intervalRef.current = setInterval(() => {
@@ -104,6 +121,8 @@ const Upload = ({ onComplete }: UploadProps) => {
             };
 
             reader.onerror = () => {
+                prevReaderRef.current = null;
+
                 if (intervalRef.current) {
                     clearInterval(intervalRef.current);
                     intervalRef.current = null;
@@ -140,32 +159,19 @@ const Upload = ({ onComplete }: UploadProps) => {
 
         if (!isSignedIn) return;
 
-        setError('');
-
-        const droppedFile = e.dataTransfer.files?.[0];
-        if (!droppedFile) return;
-
-        if (!validateFile(droppedFile)) return;
-
-        processFile(droppedFile);
+        const droppedFile = e.dataTransfer.files[0];
+        if (droppedFile && validateFile(droppedFile)) {
+            processFile(droppedFile);
+        }
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!isSignedIn) return;
 
-        setError('');
-
         const selectedFile = e.target.files?.[0];
-        if (!selectedFile) return;
-
-        if (!validateFile(selectedFile)) {
-            e.target.value = '';
-            return;
+        if (selectedFile && validateFile(selectedFile)) {
+            processFile(selectedFile);
         }
-
-        processFile(selectedFile);
-
-        e.target.value = '';
     };
 
     return (
@@ -182,7 +188,7 @@ const Upload = ({ onComplete }: UploadProps) => {
                     <input
                         type="file"
                         className="drop-input"
-                        accept=".jpg,.jpeg,.png"
+                        accept="image/jpeg,image/png"
                         disabled={!isSignedIn}
                         onChange={handleChange}
                     />
